@@ -64,7 +64,32 @@ mod system_lock {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod system_lock {
+    unsafe extern "C" {
+        pub fn os_unfair_lock_lock(p: *mut u32);
+        pub fn os_unfair_lock_unlock(p: *mut u32);
+    }
+
+    pub struct Mutex(std::cell::UnsafeCell<u32>);
+    unsafe impl Send for Mutex {}
+    unsafe impl Sync for Mutex {}
+    impl super::CriticalSection for Mutex {
+        const NAME: &'static str = "os_unfair_lock";
+        fn new() -> Self {
+            Self(std::cell::UnsafeCell::new(0))
+        }
+        fn with(&self, f: impl FnOnce()) {
+            unsafe {
+                os_unfair_lock_lock(self.0.get());
+                f();
+                os_unfair_lock_unlock(self.0.get());
+            }
+        }
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 mod system_lock {
     pub struct Mutex(std::cell::UnsafeCell<libc::pthread_mutex_t>);
     unsafe impl Send for Mutex {}
