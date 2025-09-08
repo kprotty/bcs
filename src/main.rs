@@ -38,9 +38,56 @@ impl CriticalSection for std::sync::Mutex<()> {
     }
 }
 
+#[cfg(windows)]
+mod system_lock {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        pub fn AcquireSRWLockExclusive(p: *mut *mut ());
+        pub fn ReleaseSRWLockExclusive(p: *mut *mut ());
+    }
+
+    pub struct Mutex(std::cell::UnsafeCell<*mut ()>);
+    unsafe impl Send for Mutex {}
+    unsafe impl Sync for Mutex {}
+    impl super::CriticalSection for Mutex {
+        const NAME: &'static str = "SRWLOCK";
+        fn new() -> Self {
+            Self(std::cell::UnsafeCell::new(std::ptr::null_mut()))
+        }
+        fn with(&self, f: impl FnOnce()) {
+            unsafe {
+                AcquireSRWLockExclusive(self.0.get());
+                f();
+                ReleaseSRWLockExclusive(self.0.get());
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod system_lock {
+    pub struct Mutex(std::cell::UnsafeCell<libc::pthread_mutex_t>);
+    unsafe impl Send for Mutex {}
+    unsafe impl Sync for Mutex {}
+    impl super::CriticalSection for Mutex {
+        const NAME: &'static str = "pthread_mutex_t";
+        fn new() -> Self {
+            Self(std::cell::UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER))
+        }
+        fn with(&self, f: impl FnOnce()) {
+            unsafe {
+                debug_assert_eq!(libc::pthread_mutex_lock(self.0.get()), 0);
+                f();
+                debug_assert_eq!(libc::pthread_mutex_unlock(self.0.get()), 0);
+            }
+        }
+    }
+}
+
 fn bench_all(b: Bencher) {
     b.bench::<std::sync::Mutex<()>>();
     b.bench::<parking_lot::Mutex<()>>();
+    b.bench::<system_lock::Mutex>();
 }
 
 fn main() {
