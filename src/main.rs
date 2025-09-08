@@ -11,6 +11,7 @@ use std::{
 mod bcs;
 
 fn bench_all(b: Bencher) {
+    b.bench::<bcs::Mutex<bcs::WaitFree>>();
     b.bench::<bcs::Mutex<bcs::LockFree>>();
     b.bench::<std::sync::Mutex<()>>();
     b.bench::<parking_lot::Mutex<()>>();
@@ -49,6 +50,16 @@ impl CriticalSection for std::sync::Mutex<()> {
 
 impl CriticalSection for bcs::Mutex<bcs::LockFree> {
     const NAME: &'static str = "BCS lock-free";
+    fn new() -> Self {
+        Self::default()
+    }
+    fn with(&self, f: impl FnOnce()) {
+        self.with(f)
+    }
+}
+
+impl CriticalSection for bcs::Mutex<bcs::WaitFree> {
+    const NAME: &'static str = "BCS wait-free";
     fn new() -> Self {
         Self::default()
     }

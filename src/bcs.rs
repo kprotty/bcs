@@ -163,3 +163,70 @@ impl LockFree {
         }
     }
 }
+
+#[derive(Default)]
+pub struct WaitFree {
+    tail: AtomicPtr<Node>,
+}
+
+impl Queue for WaitFree {
+    fn submit(&self, node: *mut Node) {
+        unsafe {
+            (*node).next.store(node, Ordering::Relaxed);
+
+            let tail = self.tail.swap(node, Ordering::Release);
+            if tail.is_null() {
+                return self.process(null_mut(), node);
+            }
+
+            fence(Ordering::Acquire);
+            if (*tail)
+                .next
+                .compare_exchange(tail, node, Ordering::Release, Ordering::Acquire)
+                .is_err()
+            {
+                return self.process(tail, node);
+            }
+        }
+    }
+}
+
+impl WaitFree {
+    #[cold]
+    fn process(&self, mut unparked: *mut Node, mut node: *mut Node) {
+        unsafe {
+            loop {
+                ((*node).callback)(node);
+
+                let mut next = (*node).next.load(Ordering::Acquire);
+                if next == node {
+                    if self
+                        .tail
+                        .compare_exchange(node, null_mut(), Ordering::Release, Ordering::Relaxed)
+                        .is_ok()
+                    {
+                        (*node).parker.unpark();
+                        return while let Some(node) = NonNull::new(unparked) {
+                            unparked = node.as_ref().next.load(Ordering::Relaxed);
+                            node.as_ref().parker.unpark();
+                        };
+                    }
+
+                    match (*node).next.compare_exchange(
+                        node,
+                        unparked,
+                        Ordering::Release,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => return,
+                        Err(new) => next = new,
+                    }
+                }
+
+                (*node).next.store(unparked, Ordering::Relaxed);
+                unparked = node;
+                node = next;
+            }
+        }
+    }
+}
