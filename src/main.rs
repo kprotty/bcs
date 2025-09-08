@@ -8,6 +8,15 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod bcs;
+
+fn bench_all(b: Bencher) {
+    b.bench::<bcs::Mutex<bcs::LockFree>>();
+    b.bench::<std::sync::Mutex<()>>();
+    b.bench::<parking_lot::Mutex<()>>();
+    b.bench::<system_lock::Mutex>();
+}
+
 trait CriticalSection: Send + Sync + 'static {
     const NAME: &'static str;
     fn new() -> Self;
@@ -35,6 +44,16 @@ impl CriticalSection for std::sync::Mutex<()> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         f()
+    }
+}
+
+impl CriticalSection for bcs::Mutex<bcs::LockFree> {
+    const NAME: &'static str = "BCS lock-free";
+    fn new() -> Self {
+        Self::default()
+    }
+    fn with(&self, f: impl FnOnce()) {
+        self.with(f)
     }
 }
 
@@ -107,12 +126,6 @@ mod system_lock {
             }
         }
     }
-}
-
-fn bench_all(b: Bencher) {
-    b.bench::<std::sync::Mutex<()>>();
-    b.bench::<parking_lot::Mutex<()>>();
-    b.bench::<system_lock::Mutex>();
 }
 
 fn main() {
